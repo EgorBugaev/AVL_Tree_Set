@@ -1,18 +1,22 @@
-#include <cstddef>
-#include <assert.h>
-#include <iostream>
 #include <algorithm>
-#include <queue>
+#include <assert.h>
+#include <cstddef>
+#include <iostream>
+#include <stack>
 
+/* Class for balanced binary search tree based on AVL tree.
+ * Balanced depth is achieved through keeping difference between heights of left and right children less than 2.
+ * Allows inserting/extracting elements with logarithmic complexity, linear memory usage.
+ */
 template<class T>
 class Set {
-private:
+  private:
     class TNode;
-public:
-    friend class Iterator;
+  public:
+    constexpr static size_t EMPTY_SET_SIZE = 0;
 
     Set() {
-        sz_ = 0;
+        size_ = EMPTY_SET_SIZE;
         root_ = nullptr;
         end_iter_ = iterator(nullptr, nullptr);
         begin_iter_ = end_iter_;
@@ -27,84 +31,49 @@ public:
     }
 
     Set(std::initializer_list<T> elems) : Set() {
-        for (T elem : elems) {
+        for (const T& elem : elems) {
             insert(elem);
         }
     }
 
     Set(const Set& st) : Set() {
         copy_all_nodes(st);
-        sz_ = st.sz_;
+        size_ = st.size_;
         set_boundary_iters();
     }
 
-    Set& operator= (const Set& st) {
+    // Assignment constructor, linear time.
+    Set& operator=(const Set& st) {
         if (st.begin() == begin_iter_) {
             return *this;
         }
-
-        if (root_ != nullptr) {
-            std::queue<TNode*> q;
-            q.push(root_);
-            while (!q.empty()) {
-                TNode* cur = q.front();
-                q.pop();
-                if (cur->left != nullptr) {
-                    q.push(cur->left);
-                }
-                if (cur->right != nullptr) {
-                    q.push(cur->right);
-                }
-
-                delete cur;
-            }
-            root_ = nullptr;
-            begin_iter_ = iterator(nullptr, nullptr);
-            end_iter_ = iterator(nullptr, nullptr);
-            sz_ = 0;
-        }
+        delete_all_nodes();
 
         copy_all_nodes(st);
-        sz_ = st.sz_;
+        size_ = st.size_;
         set_boundary_iters();
         return *this;
     }
 
+    // Destructor, linear time.
     ~Set() {
-        if (root_ == nullptr) {
-            return;
-        }
-
-        std::vector<TNode*> all_v;
-        std::queue<TNode*> q;
-        q.push(root_);
-        while (!q.empty()) {
-            TNode* cur = q.front();
-            q.pop();
-            if (cur->left != nullptr) {
-                q.push(cur->left);
-            }
-            if (cur->right != nullptr) {
-                q.push(cur->right);
-            }
-
-            delete cur;
-        }
+        delete_all_nodes();
     }
 
     size_t size() const {
-        return sz_;
+        return size_;
     }
 
     bool empty() const {
-        return (sz_ == 0);
+        return (size_ == EMPTY_SET_SIZE);
     }
 
+    // Inserts element in logarithmic time, simultaneously balances depth of the tree.
     void insert(const T& elem) {
         if (find(elem) != end_iter_) {
             return;
         }
-        ++sz_;
+        ++size_;
 
         if (root_ == nullptr) {
             root_ = new TNode(elem);
@@ -113,10 +82,10 @@ public:
         }
 
         TNode* node = root_;
-        std::vector<TNode* > way;
+        std::vector<TNode*> path;
 
         while (node != nullptr) {
-            way.push_back(node);
+            path.push_back(node);
             if (elem < node->val) {
                 node = node->left;
             } else {
@@ -124,55 +93,38 @@ public:
             }
         }
 
-        std::reverse(way.begin(), way.end());
-        if (way[0]->val < elem) {
-            way[0]->right = new TNode(elem);
-            way[0]->right->parent = way[0];
+        std::reverse(path.begin(), path.end());
+        if (path[0]->val < elem) {
+            path[0]->set_right(new TNode(elem));
         } else {
-            way[0]->left = new TNode(elem);
-            way[0]->left->parent = way[0];
+            path[0]->set_left(new TNode(elem));
         }
-        for (int i = 0; i < way.size(); ++i) {
-            way[i]->update_height();
-            if (way[i]->left != nullptr) {
-                way[i]->left = balance_node(way[i]->left);
-                way[i]->left->parent = way[i];
-            }
-            if (way[i]->right != nullptr) {
-                way[i]->right = balance_node(way[i]->right);
-                way[i]->right->parent = way[i];
-            }
-        }
-        root_ = balance_node(root_);
-        root_->parent = nullptr;
+
+        balance_path(path);
         set_boundary_iters();
     }
 
+    /* Finds node with the closest (less or equal) value and one child, swaps values with original node and deletes node with one child.
+     * The only child of deleted node is reassigned to its parent in place of the deleted. Logarithmic time.
+     */
     void erase(const T& elem) {
         if (find(elem) == end_iter_) {
             return;
         }
-        --sz_;
+        --size_;
 
         TNode* node = root_;
-        std::vector<TNode* > way;
+        std::vector<TNode*> path;
         TNode* x = nullptr;
+
         while (node != nullptr) {
-            way.push_back(node);
-            if (!(elem < node->val) && !(node->val < elem)) {
+            path.push_back(node);
+            if (are_equal_values(elem, node->val)) {
                 x = node;
-                if (node->diff() <= 0) {
-                    node = node->left;
-                    while (node != nullptr) {
-                        way.push_back(node);
-                        node = node->right;
-                    }
-                } else if (node->right != nullptr) {
+                node = node->left;
+                while (node != nullptr) {
+                    path.push_back(node);
                     node = node->right;
-                    while (node != nullptr) {
-                        way.push_back(node);
-                        node = node->left;
-                    }
                 }
                 break;
             }
@@ -187,89 +139,48 @@ public:
         if (x == nullptr) {
             assert(0);
         }
-        std::reverse(way.begin(), way.end());
+        std::reverse(path.begin(), path.end());
 
-        if (way[0] != x) {
-            std::swap(x->val, way[0]->val);
-        }
-        if (way.size() > 1) {
-            if (way[1]->right == way[0])
-                if (way[0]->left != nullptr) {
-                    way[1]->right = way[0]->left;
-                    way[1]->right->parent = way[1];
-                } else if (way[0]->right != nullptr){
-                    way[1]->right = way[0]->right;
-                    way[1]->right->parent = way[1];
-                } else {
-                    way[1]->right = nullptr;
-                }
-            else {
-                if (way[0]->left != nullptr) {
-                    way[1]->left = way[0]->left;
-                    way[1]->left->parent = way[1];
-                } else if (way[0]->right != nullptr) {
-                    way[1]->left = way[0]->right;
-                    way[1]->left->parent = way[1];
-                } else {
-                    way[1]->left = nullptr;
-                }
-            }
-        } else {
-            if (way[0]->left != nullptr) {
-                root_ = way[0]->left;
-                root_->parent = way[1];
-            } else if (way[0]->right != nullptr){
-                root_ = way[0]->right;
-                root_->parent = nullptr;
-            } else {
-                root_ = nullptr;
-            }
-        }
-        delete way[0];
-
-        for (int i = 1; i < way.size(); ++i) {
-            way[i]->update_height();
-            if (way[i]->left != nullptr) {
-                way[i]->left = balance_node(way[i]->left);
-                way[i]->left->parent = way[i];
-            }
-            if (way[i]->right != nullptr) {
-                way[i]->right = balance_node(way[i]->right);
-                way[i]->right->parent = way[i];
-            }
+        if (path[0] != x) {
+            std::swap(x->val, path[0]->val);
         }
 
-        if (root_ != nullptr) {
-            root_ = balance_node(root_);
-            root_->parent = nullptr;
-        }
-
+        delete_TNode(path[0]);
+        balance_path(path);
         set_boundary_iters();
     }
 
+    // Allows external access to the values stored in tree and finds next/prev element.
     class iterator {
-        friend class Set<T>;
-    public:
+      public:
         iterator() {
             node_ = nullptr;
             root_ = nullptr;
         }
+
+        iterator(Set<T>::TNode* node, Set<T>::TNode* root): node_(node), root_(root) {}
+
         const T &operator*() {
             if (node_ == nullptr) {
                 assert(0);
             }
             return node_->val;
         }
+
         const T *operator->() {
             return &(node_->val);
         }
+
         bool operator==(const iterator& b) const {
             return (node_ == b.node_) && (root_ == b.root_);
         }
+
         bool operator!=(const iterator& b) const {
             return (node_ != b.node_) || (root_ != b.root_);
         }
-        iterator& operator++ () {
+
+        // Finds next element in the tree, amortized time O(1), real time O(log size).
+        iterator& operator++() {
             if (node_ == nullptr) {
                 return *this;
             }
@@ -289,7 +200,9 @@ public:
             }
             return *this;
         }
-        iterator& operator-- () {
+
+        // Finds previous element in the tree, amortized time O(1), real O(log size).
+        iterator& operator--() {
             if (node_ == nullptr) {
                 node_ = root_;
                 while (node_->right != nullptr) {
@@ -316,7 +229,9 @@ public:
             }
             return *this;
         }
-        iterator operator++ (int) {
+
+        // Finds next element in the tree, amortized time O(1), real time O(log size).
+        const iterator operator++(int) {
             iterator old_copy = *this;
 
             if (node_ == nullptr) {
@@ -338,7 +253,9 @@ public:
             }
             return old_copy;
         }
-        iterator operator-- (int) {
+
+        // Finds previous element in the tree, amortized time O(1), real O(log size).
+        const iterator operator--(int) {
             iterator old_copy = *this;
 
             if (node_ == nullptr) {
@@ -367,9 +284,8 @@ public:
             }
             return old_copy;
         }
-    private:
-        iterator(Set<T>::TNode* node, Set<T>::TNode* root): node_(node), root_(root) {}
 
+      private:
         const Set<T>::TNode *node_;
         const Set<T>::TNode *root_;
     };
@@ -382,6 +298,7 @@ public:
         return end_iter_;
     }
 
+    // Finds element with given value or returns end_iter_ if it doesn't exist. Logarithmic time.
     iterator find(const T& elem) const {
         TNode* node = root_;
 
@@ -398,6 +315,7 @@ public:
         return end();
     }
 
+    // Finds the leftmost element with value greater or equal to given value. Logarithmic time.
     iterator lower_bound(const T& elem) const {
         if (find(elem) != end()) {
             return find(elem);
@@ -406,7 +324,7 @@ public:
 
         TNode* last_successful = nullptr;
         while (node != nullptr) {
-                if (node->val < elem) {
+            if (node->val < elem) {
                 node = node->right;
             } else {
                 last_successful = node;
@@ -415,9 +333,19 @@ public:
         }
         return iterator(last_successful, root_);
     }
-private:
+
+  private:
+    // Element in AVL tree storing actual value and three connected elements.
     class TNode {
     public:
+        // Constants showing at which difference children's heights are considered imbalance.
+        constexpr static int IMBALANCE_TO_LEFT = 2;
+        constexpr static int IMBALANCE_TO_RIGHT = -2;
+
+        // Constant showing at which difference children's heights are considered tilted so that they would become imbalanced after improper shifting.
+        constexpr static int TILTED_LEFT = 1;
+        constexpr static int TILTED_RIGHT = -1;
+
         TNode *left, *right, *parent;
         T val;
 
@@ -425,119 +353,209 @@ private:
             left = nullptr;
             right = nullptr;
             parent = nullptr;
-            height = 1;
             val();
         }
+
         explicit TNode(T value): val(value) {
             left = nullptr;
             right = nullptr;
             parent = nullptr;
-            height = 1;
         }
 
+        // Returns difference between left son's height and right son's height.
         int32_t diff() {
             int left_height = (left == nullptr ? 0 : left->height);
             int right_height = (right == nullptr ? 0 : right->height);
             return left_height - right_height;
         }
+
+        // Calculates this node's height based on children's height.
         void update_height() {
             int left_height = (left == nullptr ? 0 : left->height);
             int right_height = (right == nullptr ? 0 : right->height);
             height = std::max(left_height + 1, right_height + 1);
         }
+
+        void set_right(TNode* new_right) {
+            right = new_right;
+            if (new_right != nullptr) {
+                new_right->parent = this;
+            }
+            update_height();
+        }
+
+        void set_left(TNode* new_left) {
+            left = new_left;
+            if (new_left != nullptr) {
+                new_left->parent = this;
+            }
+            update_height();
+        }
     private:
         int32_t height;
+
     };
 
     TNode *root_;
-    size_t sz_;
+    size_t size_;
     iterator begin_iter_, end_iter_;
 
+    // Compare for equivalence without requiring == operator.
+    bool are_equal_values(T val_a, T val_b) {
+        return !(val_a < val_b) && !(val_b < val_a);
+    }
+
+    // Deletes node from tree and correctly reassigns parents and children. Node must have no more than one child.
+    void delete_TNode(TNode* node) {
+        if (node->parent == nullptr) {
+            root_ = node->left;
+            if (node->left == nullptr) {
+                root_ = node->right;
+            }
+
+            if (root_ != nullptr) {
+                root_->parent = nullptr;
+            }
+
+            delete node;
+            return;
+        }
+
+        TNode* parent = node->parent;
+        if (parent->right == node) {
+            parent->set_right(node->left);
+            if (node->left == nullptr) {
+                parent->set_right(node->right);
+            }
+        }
+        else {
+            parent->set_left(node->left);
+            if (node->left == nullptr) {
+                parent->set_left(node->right);
+            }
+        }
+        delete node;
+    }
+
+    // Balances all nodes on a vertical path in a tree starting from the lowest;
+    void balance_path(std::vector<TNode*>& path) {
+        for (int i = 1; i < path.size(); ++i) {
+            path[i]->update_height();
+            if (path[i]->left != nullptr) {
+                path[i]->set_left(balance_node(path[i]->left));
+            }
+            if (path[i]->right != nullptr) {
+                path[i]->set_right(balance_node(path[i]->right));
+            }
+        }
+
+        root_ = balance_node(root_);
+    }
+
+    // Makes this set a deep copy of another in linear time.
     void copy_all_nodes(const Set& st) {
         if (st.root_ == nullptr) {
             return;
         }
 
-        std::queue<std::pair<TNode*, TNode*> > q;
+        std::stack<std::pair<TNode*, TNode*>> q;
         root_ = new TNode(st.root_->val);
         q.push({st.root_, root_});
         while (!q.empty()) {
-            auto p = q.front();
+            auto p = q.top();
             q.pop();
 
             if (p.first->left != nullptr) {
-                p.second->left = new TNode(p.first->left->val);
-                p.second->left->parent = p.second;
-                p.second->update_height();
+                p.second->set_left(new TNode(p.first->left->val));
                 q.push({p.first->left, p.second->left});
             }
             if (p.first->right != nullptr) {
-                p.second->right = new TNode(p.first->right->val);
-                p.second->right->parent = p.second;
-                p.second->update_height();
+                p.second->set_right(new TNode(p.first->right->val));
                 q.push({p.first->right, p.second->right});
             }
         }
     }
 
-    TNode* balance_node (TNode* a) {
-        if (a == nullptr) {
-            return a;
+    // Deletes each node while traversing tree, linear time.
+    void delete_all_nodes() {
+        if (root_ == nullptr) {
+            return;
         }
 
-        if (a->diff() == -2 && (a->right->diff() == -1 || a->right->diff() == 0)) {
-            return left_rotation(a);
-        } else if (a->diff() == -2 && a->right->diff() == 1) {
-            a->right = right_rotation(a->right);
-            a->right->parent = a;
-            a->update_height();
-            return left_rotation(a);
-        } else if(a->diff() == 2 && (a->left->diff() == 1 || a->left->diff() == 0)) {
-            return right_rotation(a);
-        } else if (a->diff() == 2 && a->left->diff() == -1) {
-            a->left = left_rotation(a->left);
-            a->left->parent = a;
-            a->update_height();
-            return right_rotation(a);
+        std::stack<TNode*> q;
+        q.push(root_);
+        while (!q.empty()) {
+            TNode* cur = q.top();
+            q.pop();
+            if (cur->left != nullptr) {
+                q.push(cur->left);
+            }
+            if (cur->right != nullptr) {
+                q.push(cur->right);
+            }
+
+            delete cur;
         }
-        return a;
+
+        root_ = nullptr;
+        begin_iter_ = iterator(nullptr, nullptr);
+        end_iter_ = iterator(nullptr, nullptr);
+        size_ = 0;
     }
 
-    TNode* left_rotation(TNode* a) {
-        if (a->right == nullptr) {
-            return a;
+    /* Balances nodes' depth by swapping this node and its children so that children's heights differ for no more than 1.
+     * Before balancing we adjust children's heights so that rotating does not unbalance children.
+     */
+    TNode* balance_node(TNode* old_root) {
+        if (old_root == nullptr) {
+            return old_root;
         }
-        TNode* b = a->right;
-        a->right = b->left;
-        if (a->right != nullptr) {
-            a->right->parent = a;
+
+        if (old_root->diff() == TNode::IMBALANCE_TO_RIGHT && old_root->right->diff() == TNode::TILTED_LEFT) {
+            old_root->set_right(increase_right_height(old_root->right));
+            return increase_left_height(old_root);
+        } else if (old_root->diff() == TNode::IMBALANCE_TO_RIGHT) {
+            return increase_left_height(old_root);
+        } else if (old_root->diff() == TNode::IMBALANCE_TO_LEFT && old_root->left->diff() == TNode::TILTED_RIGHT) {
+            old_root->set_left(increase_left_height(old_root->left));
+            return increase_right_height(old_root);
+        } else if(old_root->diff() == TNode::IMBALANCE_TO_LEFT) {
+            return increase_right_height(old_root);
         }
-        a->update_height();
-        b->left = a;
-        if (b->left != nullptr) {
-            b->left->parent = b;
-        }
-        b->update_height();
-        return b;
-    }
-    TNode* right_rotation(TNode* a) {
-        if (a->left == nullptr) {
-            return a;
-        }
-        TNode* b = a->left;
-        a->left = b->right;
-        if (a->left != nullptr) {
-            a->left->parent = a;
-        }
-        a->update_height();
-        b->right = a;
-        if (b->right != nullptr) {
-            b->right->parent = b;
-        }
-        b->update_height();
-        return b;
+        return old_root;
     }
 
+    // Makes right child new root in this subtree, thus shifting old root to be its left child and increasing left child's height.
+    TNode* increase_left_height(TNode* old_root) {
+        if (old_root->right == nullptr) {
+            return old_root;
+        }
+        TNode* root_parent = old_root->parent;
+
+        TNode* new_root = old_root->right;
+        old_root->set_right(new_root->left);
+
+        new_root->set_left(old_root);
+        new_root->parent = root_parent;
+        return new_root;
+    }
+
+    // Makes left child new root in this subtree, thus shifting old root to be its right child and increasing right child's height.
+    TNode* increase_right_height(TNode* old_root) {
+        if (old_root->left == nullptr) {
+            return old_root;
+        }
+        TNode* root_parent = old_root->parent;
+
+        TNode* new_root = old_root->left;
+        old_root->set_left(new_root->right);
+
+        new_root->set_right(old_root);
+        new_root->parent = root_parent;
+        return new_root;
+    }
+
+    // Finds iterators for the first element and the element after the last.
     void set_boundary_iters() {
         TNode* node = root_;
         while (node != nullptr && node->left != nullptr) {
