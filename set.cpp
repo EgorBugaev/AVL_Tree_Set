@@ -10,8 +10,14 @@
  */
 template<class T>
 class Set {
+  public:
+    class iterator;
   private:
-    class TNode;
+    struct TNode;
+    size_t size_ = EMPTY_SET_SIZE;
+    TNode *root_ = nullptr;
+    iterator begin_iter_ = iterator(nullptr, nullptr);
+    iterator end_iter_ = iterator(nullptr, nullptr);
   public:
     constexpr static size_t EMPTY_SET_SIZE = 0;
 
@@ -152,6 +158,9 @@ class Set {
 
     // Allows external access to the values stored in tree and finds next/prev element.
     class iterator {
+      private:
+        const Set<T>::TNode *node_ = nullptr;
+        const Set<T>::TNode *root_ = nullptr;
       public:
         iterator() {
             node_ = nullptr;
@@ -234,23 +243,7 @@ class Set {
         const iterator operator++(int) {
             iterator old_copy = *this;
 
-            if (node_ == nullptr) {
-                return *this;
-            }
-            if (node_->right != nullptr) {
-                node_ = node_->right;
-                while (node_->left != nullptr) {
-                    node_ = node_->left;
-                }
-                return *this;
-            }
-
-            const TNode *prev = node_;
-            node_ = node_->parent;
-            while (node_ != nullptr && node_->right == prev) {
-                prev = node_;
-                node_ = node_->parent;
-            }
+            this->operator++();
             return old_copy;
         }
 
@@ -258,36 +251,9 @@ class Set {
         const iterator operator--(int) {
             iterator old_copy = *this;
 
-            if (node_ == nullptr) {
-                node_ = root_;
-                while (node_->right != nullptr) {
-                    node_ = node_->right;
-                }
-                return *this;
-            }
-            if (node_->left != nullptr) {
-                node_ = node_->left;
-                while (node_->right != nullptr) {
-                    node_ = node_->right;
-                }
-                return *this;
-            }
-
-            const TNode *prev = node_;
-            node_ = node_->parent;
-            while (node_ != nullptr && node_->left == prev) {
-                prev = node_;
-                node_ = node_->parent;
-            }
-            if (node_ == nullptr) {
-                assert(0);
-            }
+            this->operator--();
             return old_copy;
         }
-
-      private:
-        const Set<T>::TNode *node_;
-        const Set<T>::TNode *root_;
     };
 
     iterator begin() const {
@@ -336,23 +302,30 @@ class Set {
 
   private:
     // Element in AVL tree storing actual value and three connected elements.
-    class TNode {
-    public:
+    struct TNode {
+      private:
+        constexpr static int32_t INITIAL_HEIGHT = 0;
+
+        int32_t height = INITIAL_HEIGHT;
+      public:
         // Constants showing at which difference children's heights are considered imbalance.
-        constexpr static int IMBALANCE_TO_LEFT = 2;
-        constexpr static int IMBALANCE_TO_RIGHT = -2;
+        constexpr static int32_t IMBALANCE_TO_LEFT = 2;
+        constexpr static int32_t IMBALANCE_TO_RIGHT = -2;
 
         // Constant showing at which difference children's heights are considered tilted so that they would become imbalanced after improper shifting.
-        constexpr static int TILTED_LEFT = 1;
-        constexpr static int TILTED_RIGHT = -1;
+        constexpr static int32_t TILTED_LEFT = 1;
+        constexpr static int32_t TILTED_RIGHT = -1;
 
-        TNode *left, *right, *parent;
-        T val;
+        TNode *left = nullptr;
+        TNode *right = nullptr;
+        TNode *parent = nullptr;
+        T val = T();
 
         TNode() {
             left = nullptr;
             right = nullptr;
             parent = nullptr;
+            height = INITIAL_HEIGHT;
             val();
         }
 
@@ -360,6 +333,7 @@ class Set {
             left = nullptr;
             right = nullptr;
             parent = nullptr;
+            height = INITIAL_HEIGHT;
         }
 
         // Returns difference between left son's height and right son's height.
@@ -391,14 +365,7 @@ class Set {
             }
             update_height();
         }
-    private:
-        int32_t height;
-
     };
-
-    TNode *root_;
-    size_t size_;
-    iterator begin_iter_, end_iter_;
 
     // Compare for equivalence without requiring == operator.
     bool are_equal_values(T val_a, T val_b) {
@@ -452,46 +419,57 @@ class Set {
         root_ = balance_node(root_);
     }
 
-    // Makes this set a deep copy of another in linear time.
+    /* Makes this set a deep copy of another in linear time by traversing the original tree and copying each node's children.
+     * Two stacks are used to simultaneously process both copied nodes and their original counterparts.
+     */
     void copy_all_nodes(const Set& st) {
         if (st.root_ == nullptr) {
             return;
         }
 
-        std::stack<std::pair<TNode*, TNode*>> q;
-        root_ = new TNode(st.root_->val);
-        q.push({st.root_, root_});
-        while (!q.empty()) {
-            auto p = q.top();
-            q.pop();
+        std::stack<TNode*> copied_nodes;
+        std::stack<TNode*> original_nodes;
 
-            if (p.first->left != nullptr) {
-                p.second->set_left(new TNode(p.first->left->val));
-                q.push({p.first->left, p.second->left});
+        root_ = new TNode(st.root_->val);
+        copied_nodes.push(root_);
+        original_nodes.push(st.root_);
+
+        while (!original_nodes.empty()) {
+            auto working_copy = copied_nodes.top();
+            copied_nodes.pop();
+
+            auto original_node = original_nodes.top();
+            original_nodes.pop();
+
+            if (original_node->left != nullptr) {
+                working_copy->set_left(new TNode(original_node->left->val));
+                copied_nodes.push(working_copy->left);
+                original_nodes.push(original_node->left);
             }
-            if (p.first->right != nullptr) {
-                p.second->set_right(new TNode(p.first->right->val));
-                q.push({p.first->right, p.second->right});
+            if (original_node->right != nullptr) {
+                working_copy->set_right(new TNode(original_node->right->val));
+                copied_nodes.push(working_copy->right);
+                original_nodes.push(original_node->right);
             }
         }
     }
 
-    // Deletes each node while traversing tree, linear time.
+    // Deletes each node while traversing tree using stack for non-processed nodes, linear time.
     void delete_all_nodes() {
         if (root_ == nullptr) {
             return;
         }
 
-        std::stack<TNode*> q;
-        q.push(root_);
-        while (!q.empty()) {
-            TNode* cur = q.top();
-            q.pop();
+        std::stack<TNode*> to_delete_nodes;
+        to_delete_nodes.push(root_);
+        while (!to_delete_nodes.empty()) {
+            TNode* cur = to_delete_nodes.top();
+            to_delete_nodes.pop();
             if (cur->left != nullptr) {
-                q.push(cur->left);
+                to_delete_nodes.push(cur->left);
             }
             if (cur->right != nullptr) {
-                q.push(cur->right);
+                to_delete_nodes.push(cur->right);
             }
 
             delete cur;
